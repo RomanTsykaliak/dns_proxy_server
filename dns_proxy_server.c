@@ -18,13 +18,20 @@ General Public License along with this program.
 If not, see <https://www.gnu.org/licenses/>.
 */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <event2/event-config.h>
 #include <event2/event.h>
 #include <event2/dns.h>
 #include <event2/dns_struct.h>
 #include <event2/util.h>
+#define DNS_SERVER_IP "8.8.8.8"
+#define DNS_SERVER_PORT 53
+#define MAX_BUFFER_SIZE 512
 //#include <ldns/ldns.h>
 #include <arpa/inet.h> // inet_ntop inet_pton
 #define UNUSED(x) (void)(x)
@@ -89,6 +96,50 @@ static void evdns_server_callback(
   return;
 }
 int main() {
+  int sockfd;
+  struct sockaddr_in server_addr, client_addr,
+                                dns_server_addr;
+  socklen_t addr_len=sizeof(struct sockaddr_in);
+  char buffer[MAX_BUFFER_SIZE];
+  // Create socket
+  if((sockfd= socket(AF_INET,SOCK_DGRAM,0)) <0){
+    perror("socket creation failed");
+    exit(EXIT_FAILURE);
+  }
+  // Bind the socket to port 53
+  memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin_family= AF_INET;
+  server_addr.sin_addr.s_addr= INADDR_ANY;
+  server_addr.sin_port= htons(DNS_SERVER_PORT);
+  if(bind(sockfd,
+          (const struct sockaddr*)&server_addr,
+          sizeof(server_addr)           ) < 0) {
+    perror("bind failed");
+    exit(EXIT_FAILURE);
+  }
+  // Set up the DNS server address
+  memset(&dns_server_addr, 0,
+                       sizeof(dns_server_addr));
+  dns_server_addr.sin_family= AF_INET;
+  dns_server_addr.sin_port=
+                         htons(DNS_SERVER_PORT);
+  dns_server_addr.sin_addr.s_addr=
+                       inet_addr(DNS_SERVER_IP);
+  while(1) {
+    int len= recvfrom(sockfd, buffer,
+     MAX_BUFFER_SIZE, 0,
+     (struct sockaddr*)&client_addr, &addr_len);
+    if(len > 0) {
+      sendto(sockfd, buffer, len, 0,
+             (struct sockaddr*)&dns_server_addr,
+             sizeof(dns_server_addr));
+      len= recvfrom(sockfd, buffer,
+                MAX_BUFFER_SIZE, 0, NULL, NULL);
+      sendto(sockfd, buffer, len, 0,
+                 (struct sockaddr*)&client_addr,
+                 addr_len);
+  } }
+  return 0;
   printf("DNS proxy server starting...\n");
   printf("Number of CPU %d\n", cpuNum());
   struct event_base *event_base=
@@ -162,7 +213,7 @@ int main() {
   // obtain a valid file descriptor.  `AF_INET`
   // for IPv4 addresses.  `SOCK_DGRAM` for
   // the UDP protocol.  `0` to chose UDP.
-  int sockfd= socket(AF_INET, SOCK_DGRAM, 0);
+  sockfd= socket(AF_INET, SOCK_DGRAM, 0);
   if(sockfd < 0) {
     perror("Failed to create socket");
     return 1;
